@@ -1,0 +1,9 @@
+#!/bin/bash
+set -e
+
+docker run -it \
+           --expose 9000 \
+           -p 127.0.0.1:8200:9000 \
+           -v $(pwd)/vault.conf:/root/vault.conf \
+           cgswong/vault:latest server -config /root/vault.conf -dev
+
