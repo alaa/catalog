@@ -9,11 +9,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/alaa/catalog/merger"
 	"github.com/alaa/catalog/vault"
 	marathon "github.com/gambol99/go-marathon"
 	"github.com/gorilla/mux"
+	multierror "github.com/hashicorp/go-multierror"
 )
 
 // DeployWithSecrets Merge and overrwrite vault secrets with marathon env vars.
@@ -24,8 +26,8 @@ func DeployWithSecrets(w http.ResponseWriter, r *http.Request) {
 	secretPath := fmt.Sprintf("/secret/%s", vars["name"])
 	vaultToken := r.Header["X-Vault-Token"][0]
 
-	// parse http request body into marathon app.
-	marathonApp, err := parseService(r.Body)
+	// parse http request body into marathon apps.
+	marathonApps, err := parseService(r.Body)
 	if err != nil {
 		w.WriteHeader(http.StatusUnprocessableEntity)
 		fmt.Fprintf(w, "unprocessable entity, invalid JSON payload.")
@@ -48,27 +50,39 @@ func DeployWithSecrets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// merge marathon application environment map with vault secrets.
-	merger.EnvMerge(*marathonApp.Env, *marathonSecrets.Env)
+	var errs error
+	var deploymentIDs []string
 
-	// deploy to marathon.
-	id, err := toMarathon(marathonApp)
-	if err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
-		fmt.Fprintf(w, "Error deploying to marathon, error: %s", err)
+	for _, marathonApp := range marathonApps {
+		merger.EnvMerge(*marathonApp.Env, *marathonSecrets.Env)
+
+		// deploy to marathon.
+		deploymentID, err := toMarathon(marathonApp)
+		if err != nil {
+			errs = multierror.Append(errs, err)
+		}
+		deploymentIDs = append(deploymentIDs, deploymentID)
 	}
 
-	fmt.Fprintf(w, id)
+	if errs != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, "Error deploying to marathon, error: %s", errs)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, fmt.Sprintf(strings.Join(deploymentIDs, ", ")))
 	return
 }
 
-func parseService(rbody io.Reader) (marathon.Application, error) {
-	var app marathon.Application
+func parseService(rbody io.Reader) ([]marathon.Application, error) {
+	var apps []marathon.Application
 	decoder := json.NewDecoder(rbody)
-	if err := decoder.Decode(&app); err != nil {
+	if err := decoder.Decode(&apps); err != nil {
 		log.Printf("Error: unmarshalling marathon definition %s", err)
-		return marathon.Application{}, err
+		return []marathon.Application{}, err
 	}
-	return app, nil
+	return apps, nil
 }
 
 func toMarathon(task marathon.Application) (string, error) {
@@ -84,11 +98,12 @@ func toMarathon(task marathon.Application) (string, error) {
 		log.Printf("Failed to initialize marathon client %s", err)
 	}
 
-	id, err := client.UpdateApplication(&task, false)
+	deploy, err := client.UpdateApplication(&task, false)
 	if err != nil {
 		log.Printf("Failed to update application: %s, error: %s", task.ID, err)
+		return "", err
 	}
-	return id.DeploymentID, err
+	return deploy.DeploymentID, nil
 }
 
 func envFetch(key string) (string, error) {
