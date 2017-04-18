@@ -4,7 +4,7 @@ Easy secrets integration with Vault and Marathon.
 # Build
 
 ```
-docker build --no-cache -t catalog:dev .
+go build && docker build --no-cache -t catalog:0.9 .
 ```
 
 # Usage
@@ -19,12 +19,12 @@ docker run -it                             \
            -e VAULT_TOKEN="$VAULT_TOKEN"   \
            -e MARATHON_URL="$MARATHON_URL" \
            -p 8080:8080                    \
-           catalog:dev
+           catalog:0.9
 ```
 
 ## Create your service file:
 ```
-{
+[{
   "id": "nginx",
   "cpus": 0.1,
   "mem": 128.0,
@@ -50,7 +50,7 @@ docker run -it                             \
     "path": "/",
     "intervalSeconds": 30
   }]
-}
+}]
 ```
 
 ## Deploy the service using catalog:
@@ -67,5 +67,4 @@ curl --show-error --silent --fail       \
      -X POST                            \
      -d@nginx.json                      \
      ${CATALOG_ADDR}/service/${VAULT_ENDPOINT}
-
 ```
